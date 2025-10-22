@@ -46,12 +46,13 @@ Tip: Compile with -O for release optimisation.
 ## 🚀 Usage
 
 ```shell
-keymaster set <key> <secret>      Store or update <secret> for <key>
-keymaster get <key>               Print secret to stdout
-keymaster delete <key>            Remove secret from Keychain
+keymaster set <key> <secret>              Store or update <secret> for <key>
+keymaster get <key> [options]             Print secret to stdout
+keymaster delete <key>                    Remove secret from Keychain
 
 Options:
--h, --help                      Show detailed help and exit
+-h, --help                                Show detailed help and exit
+-d, --description <text>                  Custom description for biometric prompt (get only)
 ```
 
 ### Examples
@@ -61,6 +62,16 @@ Options:
 
 #### Read it back
 ```GITHUB_TOKEN=$(keymaster get github_token)```
+
+When running `get`, keymaster will show which key is being read:
+```
+Reading key "github_token" from Keychain...
+```
+
+#### Use a custom biometric prompt
+```keymaster get vpn_password --description "VPN wants to authenticate"```
+
+This will show "VPN wants to authenticate" in the Touch ID/password prompt instead of the default message.
 
 #### Remove when no longer needed
 ```keymaster delete github_token```

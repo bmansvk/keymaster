@@ -88,16 +88,18 @@ func printHelp() {
     protected by Touch ID or your login password.
 
     USAGE:
-      keymaster set <key> <secret>     Store or update <secret> for <key>
-      keymaster get <key>              Print secret to stdout
-      keymaster delete <key>           Remove secret from Keychain
+      keymaster set <key> <secret>              Store or update <secret> for <key>
+      keymaster get <key> [options]             Print secret to stdout
+      keymaster delete <key>                    Remove secret from Keychain
 
     OPTIONS:
-      -h, --help                       Display this help message and exit
+      -h, --help                                Display this help message and exit
+      -d, --description <text>                  Custom description for biometric prompt (get only)
 
     EXAMPLES:
       keymaster set github_token "abc123"
       keymaster get github_token
+      keymaster get vpn_password --description "VPN wants to authenticate"
       keymaster delete github_token
     """)
 }
@@ -118,11 +120,41 @@ func main() {
 
     let action = args.removeFirst()
     let key    = args.removeFirst()
-    let secret = args.first ?? ""   // Only used for "set"
+
+    // Parse optional description for "get" command
+    var customDescription: String?
+    var secret = ""
+
+    if action == "get" {
+        // Check for --description or -d flag
+        while !args.isEmpty {
+            let arg = args.removeFirst()
+            if arg == "--description" || arg == "-d" {
+                if !args.isEmpty {
+                    customDescription = args.removeFirst()
+                }
+            }
+        }
+    } else if action == "set" {
+        secret = args.first ?? ""
+    }
+
+    // Build authentication reason
+    let authReason: String
+    if let description = customDescription {
+        authReason = description
+    } else {
+        authReason = "\(action) the secret for \"\(key)\""
+    }
 
     switch action {
     case "set", "get", "delete":
-        authenticate(reason: "\(action) the secret for “\(key)”") { success, error in
+        // Show which key is being accessed
+        if action == "get" {
+            fputs("Reading key \"\(key)\" from Keychain...\n", stderr)
+        }
+
+        authenticate(reason: authReason) { success, error in
             guard success else {
                 fputs("Authentication failed: \(error?.localizedDescription ?? "Unknown error")\n", stderr)
                 exit(EXIT_FAILURE)
@@ -138,21 +170,21 @@ func main() {
                     fputs("Error writing to Keychain\n", stderr)
                     exit(EXIT_FAILURE)
                 }
-                print("✔ Key “\(key)” stored successfully")
+                print("✔ Key \"\(key)\" stored successfully")
 
             case "get":
                 guard let pwd = getPassword(key: key) else {
-                    fputs("No item found for “\(key)”\n", stderr)
+                    fputs("No item found for \"\(key)\"\n", stderr)
                     exit(EXIT_FAILURE)
                 }
                 print(pwd)
 
             case "delete":
                 guard deletePassword(key: key) else {
-                    fputs("Error deleting item for “\(key)”\n", stderr)
+                    fputs("Error deleting item for \"\(key)\"\n", stderr)
                     exit(EXIT_FAILURE)
                 }
-                print("✔ Key “\(key)” deleted successfully")
+                print("✔ Key \"\(key)\" deleted successfully")
             default: break // Unreached
             }
             exit(EXIT_SUCCESS)
