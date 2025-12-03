@@ -15,7 +15,7 @@ import Security
 struct Config {
     var username: String = ""
     var password: String = ""
-    var authDescription: String = "Keymasterd wants to access the Keychain"
+    var authDescription: String = "Keymasterd wants to access the key"
 
     var requireAuth: Bool {
         return !username.isEmpty && !password.isEmpty
@@ -198,7 +198,7 @@ func main() {
 
     // Set stdin to non-blocking for timeout handling
     let flags = fcntl(STDIN_FILENO, F_GETFL)
-    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK)
+    _ = fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK)
 
     // Read with timeout
     var attempts = 0
