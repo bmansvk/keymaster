@@ -15,7 +15,7 @@ import Security
 struct Config {
     var username: String = ""
     var password: String = ""
-    var authDescription: String = "Keymasterd wants to access the key"
+    var authDescription: String = "access the keychain key"
 
     var requireAuth: Bool {
         return !username.isEmpty && !password.isEmpty
