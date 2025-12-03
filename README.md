@@ -104,6 +104,209 @@ Forked from johnthethird/keymaster – thanks for the original idea and groundwo
 
 ---
 
+---
+
+# Keymasterd
+
+<div align="center">
+  <em>HTTP daemon for secure macOS Keychain access – guarded by <strong>Touch ID</strong> <em>and</em> your login password</em>
+</div>
+
+Keymasterd is an HTTP server that exposes Keychain secrets over a local HTTP API. Each request triggers biometric/password authentication, making it suitable for automated tools that need secure secret access with user confirmation.
+
+---
+
+## Features
+- HTTP API for Keychain access
+- Touch ID / password authentication per request
+- HTTP Basic Authentication for client verification
+- Configurable via command-line arguments and environment variables
+- Runs as a macOS launchd service
+- Password passed via environment variable (not visible in process list)
+
+---
+
+## Installation
+
+### Build
+```shell
+swiftc keymasterd.swift -o keymasterd
+```
+
+### Install
+```shell
+mv keymasterd /usr/local/bin/
+```
+
+---
+
+## Usage
+
+```shell
+keymasterd [options]
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-p, --port <port>` | Port to listen on | 8787 |
+| `-b, --bind <host>` | Host/IP to bind to | 127.0.0.1 |
+| `-u, --username <user>` | HTTP Basic Auth username | (none) |
+| `-d, --description <text>` | Custom biometric prompt text | "Keymasterd wants to access the Keychain" |
+| `-h, --help` | Display help message | |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `KEYMASTERD_PASSWORD` | HTTP Basic Auth password (required with `-u`) |
+| `KEYMASTERD_USERNAME` | HTTP Basic Auth username (alternative to `-u`) |
+| `KEYMASTERD_PORT` | Port to listen on (alternative to `-p`) |
+| `KEYMASTERD_BIND` | Host/IP to bind to (alternative to `-b`) |
+
+Command-line arguments override environment variables.
+
+---
+
+## API Endpoints
+
+### GET /key/<keyname>
+Retrieve a secret from the Keychain. Triggers biometric/password authentication.
+
+**Response:**
+- `200 OK` - Secret value in plain text
+- `401 Unauthorized` - Missing or invalid HTTP Basic Auth
+- `403 Forbidden` - Biometric/password authentication failed
+- `404 Not Found` - Key not found in Keychain
+
+### GET /health
+Health check endpoint. Returns `OK` if server is running.
+
+---
+
+## Examples
+
+### Start server with HTTP Basic Auth
+```shell
+KEYMASTERD_PASSWORD=secret123 keymasterd --port 9000 --username admin
+```
+
+### Retrieve a secret with curl
+```shell
+curl -u admin:secret123 http://localhost:9000/key/github_token
+```
+
+### Use in a script
+```shell
+#!/usr/bin/env bash
+API_KEY=$(curl -s -u admin:secret123 http://localhost:8787/key/my_api_key)
+curl -H "Authorization: Bearer $API_KEY" https://api.example.com/v1/...
+```
+
+---
+
+## Running as a macOS Service
+
+### 1. Copy the plist template
+```shell
+cp com.keymaster.keymasterd.plist ~/Library/LaunchAgents/
+```
+
+### 2. Edit the plist
+Update the following in `~/Library/LaunchAgents/com.keymaster.keymasterd.plist`:
+- Set `KEYMASTERD_PASSWORD` to a secure password
+- Adjust username and other options as needed
+
+### 3. Load the service
+```shell
+launchctl load ~/Library/LaunchAgents/com.keymaster.keymasterd.plist
+```
+
+### 4. Check status
+```shell
+launchctl list | grep keymasterd
+curl http://localhost:8787/health
+```
+
+### 5. View logs
+```shell
+tail -f /tmp/keymasterd.log
+```
+
+### 6. Unload the service
+```shell
+launchctl unload ~/Library/LaunchAgents/com.keymaster.keymasterd.plist
+```
+
+---
+
+## Security Considerations
+
+- **Localhost binding**: By default, keymasterd binds to `127.0.0.1`, restricting access to local processes only
+- **HTTP Basic Auth**: Always configure authentication when exposing to any network
+- **Password via env**: The HTTP auth password is passed via `KEYMASTERD_PASSWORD` environment variable, keeping it hidden from `ps` output
+- **Per-request auth**: Each Keychain access triggers Touch ID or password prompt
+- **HTTPS**: For production use over a network, consider placing keymasterd behind an HTTPS reverse proxy
+
+---
+
+## On-Demand Mode (inetd-style)
+
+For systems where you don't want keymasterd running continuously, use the inetd-compatible version. Launchd listens on the socket and spawns keymasterd-inetd only when a request arrives.
+
+### Build
+```shell
+swiftc keymasterd-inetd.swift -o keymasterd-inetd
+mv keymasterd-inetd /usr/local/bin/
+```
+
+### Configuration
+
+The inetd version uses environment variables only:
+
+| Variable | Description |
+|----------|-------------|
+| `KEYMASTERD_USERNAME` | HTTP Basic Auth username |
+| `KEYMASTERD_PASSWORD` | HTTP Basic Auth password |
+| `KEYMASTERD_DESCRIPTION` | Custom biometric prompt text |
+
+### Setup
+
+1. Copy the plist:
+```shell
+cp com.keymaster.keymasterd-inetd.plist ~/Library/LaunchAgents/
+```
+
+2. Edit `~/Library/LaunchAgents/com.keymaster.keymasterd-inetd.plist`:
+   - Set `KEYMASTERD_PASSWORD` to a secure password
+   - Adjust username as needed
+
+3. Load the service:
+```shell
+launchctl load ~/Library/LaunchAgents/com.keymaster.keymasterd-inetd.plist
+```
+
+### How it works
+
+1. Launchd listens on port 8787
+2. When a connection arrives, launchd spawns `keymasterd-inetd`
+3. The HTTP request is passed via stdin, response via stdout
+4. Process exits after handling the single request
+5. No daemon runs between requests
+
+### Comparison
+
+| Feature | keymasterd | keymasterd-inetd |
+|---------|------------|------------------|
+| Running process | Always | On-demand only |
+| Memory usage | Constant | Zero when idle |
+| First request latency | Instant | ~100ms spawn time |
+| Configuration | CLI args + env | Environment only |
+| Plist | `com.keymaster.keymasterd.plist` | `com.keymaster.keymasterd-inetd.plist` |
+
+---
+
 📜 License
 
 This project is licensed under the MIT License – see LICENSE for details.
