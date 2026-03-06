@@ -150,7 +150,21 @@ func processRequest(_ request: String) -> String {
     }
 
     let method = parts[0]
-    let path = parts[1]
+    let fullPath = parts[1]
+
+    // Split path and query string
+    let pathComponents = fullPath.components(separatedBy: "?")
+    let path = pathComponents[0]
+    var queryParams: [String: String] = [:]
+    if pathComponents.count > 1 {
+        let queryString = pathComponents[1]
+        for param in queryString.components(separatedBy: "&") {
+            let kv = param.components(separatedBy: "=")
+            if kv.count == 2 {
+                queryParams[kv[0].removingPercentEncoding ?? kv[0]] = kv[1].removingPercentEncoding ?? kv[1]
+            }
+        }
+    }
 
     // Check HTTP Basic Auth if configured
     if config.requireAuth {
@@ -197,12 +211,16 @@ func processRequest(_ request: String) -> String {
             return httpResponse(status: 400, body: "Key name(s) required", contentType: "application/json")
         }
 
-        let keyList = keyNames.map { "\"\($0)\"" }.joined(separator: ", ")
         let reason: String
-        if keyNames.count == 1 {
-            reason = "\(config.authDescription): \(keyList)"
+        if let desc = queryParams["description"] {
+            reason = desc
         } else {
-            reason = "\(config.authDescription): \(keyNames.count) keys (\(keyList))"
+            let keyList = keyNames.map { "\"\($0)\"" }.joined(separator: ", ")
+            if keyNames.count == 1 {
+                reason = "\(config.authDescription): \(keyList)"
+            } else {
+                reason = "\(config.authDescription): \(keyNames.count) keys (\(keyList))"
+            }
         }
 
         let (success, error) = authenticate(reason: reason)
@@ -242,7 +260,12 @@ func processRequest(_ request: String) -> String {
         let decodedKeyName = keyName.removingPercentEncoding ?? keyName
 
         // Authenticate
-        let reason = "\(config.authDescription): \"\(decodedKeyName)\""
+        let reason: String
+        if let desc = queryParams["description"] {
+            reason = desc
+        } else {
+            reason = "\(config.authDescription): \"\(decodedKeyName)\""
+        }
         let (success, error) = authenticate(reason: reason)
 
         guard success else {

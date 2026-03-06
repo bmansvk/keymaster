@@ -194,6 +194,9 @@ Command-line arguments override environment variables.
 ### GET /key/\<keyname\>
 Retrieve a single secret from the Keychain (plain text response). Triggers biometric/password authentication.
 
+**Query parameters:**
+- `description` (optional) — Custom text for the Touch ID / password prompt shown to the user.
+
 **Response:**
 - `200 OK` - Secret value in plain text
 - `401 Unauthorized` - Missing or invalid HTTP Basic Auth
@@ -202,6 +205,9 @@ Retrieve a single secret from the Keychain (plain text response). Triggers biome
 
 ### GET /keys/\<key1\>,\<key2\>,...
 Retrieve one or more secrets in a single authenticated request. Returns JSON.
+
+**Query parameters:**
+- `description` (optional) — Custom text for the Touch ID / password prompt shown to the user.
 
 **Response (single key):**
 ```json
@@ -249,6 +255,15 @@ curl -u admin:secret123 http://localhost:9000/keys/github_token
 ```shell
 curl -u admin:secret123 http://localhost:9000/keys/github_token,gitlab_token,slack_token
 # [{"key": "github_token", "value": "...", "error": null}, {"key": "gitlab_token", "value": "...", "error": null}, ...]
+```
+
+### Custom biometric prompt description
+```shell
+# Tell the user why the secret is being requested
+curl -u admin:secret123 'http://localhost:9000/keys/deploy_key?description=CI+pipeline+deploying+to+production'
+
+# Works on /key/ too
+curl -u admin:secret123 'http://localhost:9000/key/github_token?description=Release+script+needs+GitHub+token'
 ```
 
 ### Use in a script

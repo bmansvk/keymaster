@@ -207,7 +207,21 @@ class HTTPServer {
         }
 
         let method = parts[0]
-        let path = parts[1]
+        let fullPath = parts[1]
+
+        // Split path and query string
+        let pathComponents = fullPath.components(separatedBy: "?")
+        let path = pathComponents[0]
+        var queryParams: [String: String] = [:]
+        if pathComponents.count > 1 {
+            let queryString = pathComponents[1]
+            for param in queryString.components(separatedBy: "&") {
+                let kv = param.components(separatedBy: "=")
+                if kv.count == 2 {
+                    queryParams[kv[0].removingPercentEncoding ?? kv[0]] = kv[1].removingPercentEncoding ?? kv[1]
+                }
+            }
+        }
 
         // Check HTTP Basic Auth if configured
         if config.requireAuth {
@@ -253,7 +267,7 @@ class HTTPServer {
             guard !keyNames.isEmpty else {
                 return httpResponse(status: 400, body: "Key name(s) required", contentType: "application/json")
             }
-            return handleGetKeys(keyNames: keyNames)
+            return handleGetKeys(keyNames: keyNames, customDescription: queryParams["description"])
         }
 
         // Single key retrieval: /key/<keyname>
@@ -266,23 +280,27 @@ class HTTPServer {
             // URL decode the key name
             let decodedKeyName = keyName.removingPercentEncoding ?? keyName
 
-            return handleGetKey(keyName: decodedKeyName)
+            return handleGetKey(keyName: decodedKeyName, customDescription: queryParams["description"])
         }
 
         return httpResponse(status: 404, body: "Not Found")
     }
 
-    private func authenticateOnce(keyNames: [String]) -> (Bool, Error?) {
+    private func authenticateOnce(keyNames: [String], customDescription: String? = nil) -> (Bool, Error?) {
         let semaphore = DispatchSemaphore(value: 0)
         var authSuccess = false
         var authError: Error?
 
-        let keyList = keyNames.map { "\"\($0)\"" }.joined(separator: ", ")
         let reason: String
-        if keyNames.count == 1 {
-            reason = "\(config.authDescription): \(keyList)"
+        if let desc = customDescription {
+            reason = desc
         } else {
-            reason = "\(config.authDescription): \(keyNames.count) keys (\(keyList))"
+            let keyList = keyNames.map { "\"\($0)\"" }.joined(separator: ", ")
+            if keyNames.count == 1 {
+                reason = "\(config.authDescription): \(keyList)"
+            } else {
+                reason = "\(config.authDescription): \(keyNames.count) keys (\(keyList))"
+            }
         }
 
         DispatchQueue.main.async {
@@ -297,10 +315,10 @@ class HTTPServer {
         return (authSuccess, authError)
     }
 
-    private func handleGetKey(keyName: String) -> String {
+    private func handleGetKey(keyName: String, customDescription: String? = nil) -> String {
         log("Request for key: \(keyName)")
 
-        let (authSuccess, authError) = authenticateOnce(keyNames: [keyName])
+        let (authSuccess, authError) = authenticateOnce(keyNames: [keyName], customDescription: customDescription)
 
         guard authSuccess else {
             let errorMsg = authError?.localizedDescription ?? "Authentication failed"
@@ -317,10 +335,10 @@ class HTTPServer {
         return httpResponse(status: 200, body: password, contentType: "text/plain")
     }
 
-    private func handleGetKeys(keyNames: [String]) -> String {
+    private func handleGetKeys(keyNames: [String], customDescription: String? = nil) -> String {
         log("Request for keys: \(keyNames.joined(separator: ", "))")
 
-        let (authSuccess, authError) = authenticateOnce(keyNames: keyNames)
+        let (authSuccess, authError) = authenticateOnce(keyNames: keyNames, customDescription: customDescription)
 
         guard authSuccess else {
             let errorMsg = authError?.localizedDescription ?? "Authentication failed"
@@ -424,6 +442,10 @@ func printHelp() {
       GET /keys/<key1>,<key2>,...            Retrieve multiple secrets (JSON)
       GET /health                           Health check endpoint
 
+    QUERY PARAMETERS:
+      ?description=<text>                   Custom description for the biometric prompt
+                                            (applies to /key/ and /keys/ endpoints)
+
     EXAMPLES:
       # Start with defaults (localhost:8787, no auth)
       keymasterd
@@ -449,6 +471,9 @@ func printHelp() {
 
       # With HTTP Basic Auth
       curl -u admin:secret123 http://localhost:8787/keys/github_token,gitlab_token
+
+      # Custom biometric prompt description
+      curl 'http://localhost:8787/keys/github_token?description=CI+pipeline+needs+GitHub+token'
 
       # Health check
       curl http://localhost:8787/health
