@@ -68,9 +68,50 @@ func authenticate(reason: String) -> (success: Bool, error: Error?) {
     return (authSuccess, authError)
 }
 
+// MARK: - JSON helpers
+
+func jsonEscape(_ s: String) -> String {
+    var out = ""
+    for ch in s {
+        switch ch {
+        case "\"": out += "\\\""
+        case "\\": out += "\\\\"
+        case "\n": out += "\\n"
+        case "\r": out += "\\r"
+        case "\t": out += "\\t"
+        default:
+            if ch.asciiValue != nil && ch.asciiValue! < 0x20 {
+                out += String(format: "\\u%04x", ch.asciiValue!)
+            } else {
+                out.append(ch)
+            }
+        }
+    }
+    return out
+}
+
+func jsonObject(_ pairs: [(String, Any)]) -> String {
+    var entries: [String] = []
+    for (key, value) in pairs {
+        let k = "\"\(jsonEscape(key))\""
+        let v: String
+        if let s = value as? String {
+            v = "\"\(jsonEscape(s))\""
+        } else if let b = value as? Bool {
+            v = b ? "true" : "false"
+        } else if value is NSNull {
+            v = "null"
+        } else {
+            v = "\"\(jsonEscape(String(describing: value)))\""
+        }
+        entries.append("\(k): \(v)")
+    }
+    return "{\(entries.joined(separator: ", "))}"
+}
+
 // MARK: - HTTP Processing
 
-func httpResponse(status: Int, body: String, headers: [String: String] = [:]) -> String {
+func httpResponse(status: Int, body: String, contentType: String = "text/plain", headers: [String: String] = [:]) -> String {
     let statusText: String
     switch status {
     case 200: statusText = "OK"
@@ -83,7 +124,7 @@ func httpResponse(status: Int, body: String, headers: [String: String] = [:]) ->
     }
 
     var response = "HTTP/1.1 \(status) \(statusText)\r\n"
-    response += "Content-Type: text/plain\r\n"
+    response += "Content-Type: \(contentType)\r\n"
     response += "Content-Length: \(body.utf8.count)\r\n"
     response += "Connection: close\r\n"
 
@@ -143,7 +184,54 @@ func processRequest(_ request: String) -> String {
         return httpResponse(status: 200, body: "OK")
     }
 
-    // Key retrieval: /key/<keyname>
+    // Multi-key retrieval: /keys/<key1>,<key2>,...
+    if path.hasPrefix("/keys/") {
+        let keysParam = String(path.dropFirst("/keys/".count))
+        guard !keysParam.isEmpty else {
+            return httpResponse(status: 400, body: "Key name(s) required", contentType: "application/json")
+        }
+        let keyNames = keysParam.components(separatedBy: ",")
+            .map { ($0.removingPercentEncoding ?? $0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !keyNames.isEmpty else {
+            return httpResponse(status: 400, body: "Key name(s) required", contentType: "application/json")
+        }
+
+        let keyList = keyNames.map { "\"\($0)\"" }.joined(separator: ", ")
+        let reason: String
+        if keyNames.count == 1 {
+            reason = "\(config.authDescription): \(keyList)"
+        } else {
+            reason = "\(config.authDescription): \(keyNames.count) keys (\(keyList))"
+        }
+
+        let (success, error) = authenticate(reason: reason)
+        guard success else {
+            let errorMsg = error?.localizedDescription ?? "Authentication failed"
+            return httpResponse(status: 403, body: jsonObject([("error", "Authentication failed: \(errorMsg)")]), contentType: "application/json")
+        }
+
+        var results: [String] = []
+        for k in keyNames {
+            let pwd = getPassword(key: k)
+            if let pwd = pwd {
+                results.append(jsonObject([("key", k), ("value", pwd), ("error", NSNull())]))
+            } else {
+                results.append(jsonObject([("key", k), ("value", NSNull()), ("error", "not found")]))
+            }
+        }
+
+        let body: String
+        if keyNames.count == 1 {
+            body = results[0]
+        } else {
+            body = "[\(results.joined(separator: ", "))]"
+        }
+
+        return httpResponse(status: 200, body: body, contentType: "application/json")
+    }
+
+    // Single key retrieval: /key/<keyname>
     if path.hasPrefix("/key/") {
         let keyName = String(path.dropFirst("/key/".count))
         guard !keyName.isEmpty else {
