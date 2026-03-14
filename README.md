@@ -46,13 +46,14 @@ Tip: Compile with -O for release optimisation.
 ## 🚀 Usage
 
 ```shell
-keymaster set <key> <secret>              Store or update <secret> for <key>
-keymaster get <key> [options]             Print secret to stdout
-keymaster delete <key>                    Remove secret from Keychain
+keymaster set <key> <secret>                  Store or update <secret> for <key>
+keymaster get <key>[,<key2>,...] [options]     Print secret(s) to stdout (JSON)
+keymaster delete <key>                        Remove secret from Keychain
 
 Options:
 -h, --help                                Show detailed help and exit
 -d, --description <text>                  Custom description for biometric prompt (get only)
+--plain                                   Output raw value instead of JSON (single key only)
 ```
 
 ### Examples
@@ -60,12 +61,22 @@ Options:
 #### Save a GitHub token
 ```keymaster set github_token "ghp_abc123"```
 
-#### Read it back
-```GITHUB_TOKEN=$(keymaster get github_token)```
-
-When running `get`, keymaster will show which key is being read:
+#### Read it back (JSON output, default)
+```shell
+keymaster get github_token
+# {"key": "github_token", "value": "ghp_abc123", "error": null}
 ```
-Reading key "github_token" from Keychain...
+
+#### Read multiple keys with a single authentication
+```shell
+keymaster get github_token,gitlab_token,slack_token
+# [{"key": "github_token", "value": "ghp_abc123", "error": null}, {"key": "gitlab_token", "value": "glpat_xyz", "error": null}, {"key": "slack_token", "value": null, "error": "not found"}]
+```
+Only one Touch ID / password prompt is shown for the entire batch.
+
+#### Plain text output (legacy behaviour)
+```shell
+GITHUB_TOKEN=$(keymaster get github_token --plain)
 ```
 
 #### Use a custom biometric prompt
@@ -76,12 +87,21 @@ This will show "VPN wants to authenticate" in the Touch ID/password prompt inste
 #### Remove when no longer needed
 ```keymaster delete github_token```
 
-Inside a Bash script:
+Inside a Bash script (using JSON with jq):
 ```shell
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_KEY=$(keymaster get my_service_api_key)
+API_KEY=$(keymaster get my_service_api_key | jq -r '.value')
+curl -H "Authorization: Bearer $API_KEY" https://api.example.com/v1/...
+```
+
+Or using plain mode:
+```shell
+#!/usr/bin/env bash
+set -euo pipefail
+
+API_KEY=$(keymaster get my_service_api_key --plain)
 curl -H "Authorization: Bearer $API_KEY" https://api.example.com/v1/...
 ```
 
@@ -171,14 +191,42 @@ Command-line arguments override environment variables.
 
 ## API Endpoints
 
-### GET /key/<keyname>
-Retrieve a secret from the Keychain. Triggers biometric/password authentication.
+### GET /key/\<keyname\>
+Retrieve a single secret from the Keychain (plain text response). Triggers biometric/password authentication.
+
+**Query parameters:**
+- `description` (optional) — Custom text for the Touch ID / password prompt shown to the user.
 
 **Response:**
 - `200 OK` - Secret value in plain text
 - `401 Unauthorized` - Missing or invalid HTTP Basic Auth
 - `403 Forbidden` - Biometric/password authentication failed
 - `404 Not Found` - Key not found in Keychain
+
+### GET /keys/\<key1\>,\<key2\>,...
+Retrieve one or more secrets in a single authenticated request. Returns JSON.
+
+**Query parameters:**
+- `description` (optional) — Custom text for the Touch ID / password prompt shown to the user.
+
+**Response (single key):**
+```json
+{"key": "github_token", "value": "ghp_abc123", "error": null}
+```
+
+**Response (multiple keys):**
+```json
+[
+  {"key": "github_token", "value": "ghp_abc123", "error": null},
+  {"key": "gitlab_token", "value": null, "error": "not found"}
+]
+```
+
+- `200 OK` - JSON with results for each requested key
+- `401 Unauthorized` - Missing or invalid HTTP Basic Auth
+- `403 Forbidden` - Biometric/password authentication failed
+
+Keys that don't exist are returned with `"value": null` and an `"error"` message rather than failing the entire request.
 
 ### GET /health
 Health check endpoint. Returns `OK` if server is running.
@@ -192,16 +240,43 @@ Health check endpoint. Returns `OK` if server is running.
 KEYMASTERD_PASSWORD=secret123 keymasterd --port 9000 --username admin
 ```
 
-### Retrieve a secret with curl
+### Retrieve a single secret with curl (plain text)
 ```shell
 curl -u admin:secret123 http://localhost:9000/key/github_token
+```
+
+### Retrieve a single secret as JSON
+```shell
+curl -u admin:secret123 http://localhost:9000/keys/github_token
+# {"key": "github_token", "value": "ghp_abc123", "error": null}
+```
+
+### Retrieve multiple secrets with one authentication
+```shell
+curl -u admin:secret123 http://localhost:9000/keys/github_token,gitlab_token,slack_token
+# [{"key": "github_token", "value": "...", "error": null}, {"key": "gitlab_token", "value": "...", "error": null}, ...]
+```
+
+### Custom biometric prompt description
+```shell
+# Tell the user why the secret is being requested
+curl -u admin:secret123 'http://localhost:9000/keys/deploy_key?description=CI+pipeline+deploying+to+production'
+
+# Works on /key/ too
+curl -u admin:secret123 'http://localhost:9000/key/github_token?description=Release+script+needs+GitHub+token'
 ```
 
 ### Use in a script
 ```shell
 #!/usr/bin/env bash
+# Single key (plain text, legacy)
 API_KEY=$(curl -s -u admin:secret123 http://localhost:8787/key/my_api_key)
 curl -H "Authorization: Bearer $API_KEY" https://api.example.com/v1/...
+
+# Multiple keys (JSON, parse with jq)
+SECRETS=$(curl -s -u admin:secret123 http://localhost:8787/keys/github_token,deploy_key)
+GH_TOKEN=$(echo "$SECRETS" | jq -r '.[0].value')
+DEPLOY_KEY=$(echo "$SECRETS" | jq -r '.[1].value')
 ```
 
 ---
